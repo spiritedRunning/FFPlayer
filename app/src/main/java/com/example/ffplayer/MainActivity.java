@@ -21,18 +21,23 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         surfaceView.getHolder().addCallback(this);
 
         mPlayer = new FFPlayer();
-        mPlayer.setDataSource("/sdcard/bill.mp4");
-//        mPlayer.setDataSource("http://ivi.bupt.edu.cn/hls/cctv1hd.m3u8");
+//        mPlayer.setDataSource("/sdcard/bill.mp4");
+        mPlayer.setDataSource("http://ivi.bupt.edu.cn/hls/cctv1hd.m3u8");
         mPlayer.setOnPrepareListener(new FFPlayer.OnPrepareListener() {
             @Override
             public void onPrepared() {
                 mPlayer.start();
             }
         });
-        mPlayer.prepare();
+
 
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        mPlayer.prepare();
+    }
 
     @Override
     public void surfaceCreated(@NonNull SurfaceHolder holder) {
