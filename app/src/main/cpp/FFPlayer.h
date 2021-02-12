@@ -24,10 +24,12 @@ class FFPlayer {
 
 public:
     FFPlayer(JavaCallHelper *helper);
+    ~FFPlayer();
 
     void setDataSource(const char* path);
     void prepare();
     void start();
+    void stop();
 
     void setWindow(ANativeWindow *window);
 
@@ -35,6 +37,7 @@ public:
 private:
     void _prepare();
     void _start();
+    void release();
 
 private:
     char* path;

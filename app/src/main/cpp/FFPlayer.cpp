@@ -18,8 +18,23 @@ FFPlayer::FFPlayer(JavaCallHelper *helper) : helper(helper) {
 }
 
 
+FFPlayer::~FFPlayer() {
+    avformat_network_deinit();
+    delete helper;
+    helper = 0;
+
+    if (path) {
+        delete[] path;
+        path = 0;
+    }
+}
+
 
 void FFPlayer::setDataSource(const char *path_) {
+//    if (path) {
+//        delete[] path;
+//    }
+
     path = new char[strlen(path_) + 1];
     strcpy(path, path_);
 }
@@ -59,7 +74,7 @@ void FFPlayer::_prepare() {
     if (ret < 0) {
         LOGE("find stream %s failed, return %d, error: %s", path, ret, av_err2str(ret));
         helper->onError(FFMPEG_CAN_NOT_FIND_STREAMS, THREAD_CHILD);
-        return;
+        goto ERROR;
     }
     duration = avFormatContext->duration / AV_TIME_BASE;
 
@@ -70,19 +85,26 @@ void FFPlayer::_prepare() {
         AVCodec *dec = avcodec_find_decoder(parameters->codec_id);
         if (!dec) {
             helper->onError(FFMPEG_FIND_DECODER_FAIL, THREAD_CHILD);
-            return;
+            goto ERROR;
         }
 
         AVCodecContext *codecContext = avcodec_alloc_context3(dec);
         // 解码信息赋值给解码上下文的各种成员
         if (avcodec_parameters_to_context(codecContext, parameters) < 0) {
             helper->onError(FFMPEG_CODEC_CONTEXT_PARAMETERS_FAIL, THREAD_CHILD);
-            return;
+            goto ERROR;
+        }
+
+        // 多线程解码
+        if (parameters->codec_type == AVMEDIA_TYPE_VIDEO) {
+            codecContext->thread_count = 8;
+        } else if (parameters->codec_type == AVMEDIA_TYPE_AUDIO) {
+            codecContext->thread_count = 1;
         }
 
         if (avcodec_open2(codecContext, dec, 0) != 0) {
             helper->onError(FFMPEG_OPEN_DECODER_FAIL, THREAD_CHILD);
-            return;
+            goto ERROR;
         }
 
         if (parameters->codec_type == AVMEDIA_TYPE_AUDIO) {
@@ -107,10 +129,15 @@ void FFPlayer::_prepare() {
 
     if (!videoChannel && !audioChannel) {
         helper->onError(FFMPEG_NOMEDIA, THREAD_CHILD);
-        return;
+        goto ERROR;
     }
 
     helper->onPrepare(THREAD_CHILD);
+    return;
+
+ERROR:
+    LOGE("failed! release resource");
+    release();
 
 }
 
@@ -125,6 +152,7 @@ void *start_t(void *args) {
 void FFPlayer::start() {
     isPlaying = true;
     if (videoChannel) {
+        videoChannel->audioChannel = audioChannel;
         videoChannel->play();
     }
 
@@ -149,21 +177,29 @@ void FFPlayer::_start() {
             } else { // 多路的情况不处理
                 av_packet_free(&packet);
             }
-        } else if (ret == AVERROR_EOF) {
-            // 读取完毕，不一定播放完毕
-            if (videoChannel->pkt_queue.empty() && videoChannel->frame_queue.empty()) {
-                // 播放完毕
+        } else {
+            av_packet_free(&packet);
+
+            if (ret == AVERROR_EOF) {
+                // 读取完毕，不一定播放完毕 important!
+                if (videoChannel->pkt_queue.empty() && videoChannel->frame_queue.empty() &&
+                    audioChannel->pkt_queue.empty() && audioChannel->frame_queue.empty()) {
+                    // 播放完毕
+                    break;
+                }
+            } else {
+                LOGE("read data failed. ret: %d, error: %s", ret, av_err2str(ret));
                 break;
             }
-
-        } else {
-            break;
         }
+
+
     }
 
     isPlaying = 0;
-    videoChannel->stop();
+
     audioChannel->stop();
+    videoChannel->stop();
 }
 
 void FFPlayer::setWindow(ANativeWindow *window) {
@@ -172,6 +208,34 @@ void FFPlayer::setWindow(ANativeWindow *window) {
         videoChannel->setWindow(window);
     }
 }
+
+void FFPlayer::stop() {
+    isPlaying = 0;
+    pthread_join(prepareTask, 0);
+    pthread_join(startTask, 0);
+
+    release();
+}
+
+void FFPlayer::release() {
+    if (audioChannel) {
+        delete audioChannel;
+        audioChannel = 0;
+    }
+
+    if (videoChannel) {
+        delete videoChannel;
+        videoChannel = 0;
+    }
+    if (avFormatContext) {
+        avformat_close_input(&avFormatContext);
+        avformat_free_context(avFormatContext);
+        avFormatContext = 0;
+    }
+}
+
+
+
 
 
 

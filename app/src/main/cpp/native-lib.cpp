@@ -53,3 +53,11 @@ Java_com_example_ffplayer_FFPlayer_setSurface(JNIEnv *env, jobject thiz, jlong n
     ANativeWindow *window = ANativeWindow_fromSurface(env, surface);
     player->setWindow(window);
 }
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_example_ffplayer_FFPlayer_stop(JNIEnv *env, jobject thiz, jlong native_handle) {
+    FFPlayer *player = reinterpret_cast<FFPlayer *>(native_handle);
+    player->stop();
+    delete player;
+}

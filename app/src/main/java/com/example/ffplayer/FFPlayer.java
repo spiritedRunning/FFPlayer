@@ -36,7 +36,7 @@ public class FFPlayer {
     }
 
     public void stop() {
-
+        stop(nativeHandle);
     }
 
 
@@ -99,4 +99,6 @@ public class FFPlayer {
     private native void start(long nativeHandle);
 
     private native void setSurface(long nativeHandle, Surface surface);
+
+    private native void stop(long nativeHandle);
 }

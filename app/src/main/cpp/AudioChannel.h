@@ -35,6 +35,7 @@ private:
     void play_t();
 
     int getData_t();
+    void _releaseOpenSL();
 
 
 private:
@@ -44,6 +45,15 @@ private:
     int bufferCount;
     int out_channels;
     int out_samplesSize;
+
+    SLObjectItf engineObject = NULL;
+    SLEngineItf engineInterface = NULL;
+    SLObjectItf outputMixObject = NULL;
+
+    SLObjectItf bqPlayerObject = NULL;
+    SLPlayItf bqPlayerInterface = NULL;
+    SLAndroidSimpleBufferQueueItf bqPlayerBufferQueue = NULL;
+
 
 };
 

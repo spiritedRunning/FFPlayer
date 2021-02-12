@@ -2,7 +2,12 @@
 // Created by Administrator on 2021/1/26.
 //
 
+extern "C" {
+#include <libavutil/time.h>
+}
+
 #include "AudioChannel.h"
+#include "Log.h"
 
 AudioChannel::AudioChannel(int channelId, JavaCallHelper *helper, AVCodecContext *avCodecContext,
                            const AVRational &base) : BaseChannel(channelId, helper, avCodecContext,
@@ -20,7 +25,8 @@ AudioChannel::AudioChannel(int channelId, JavaCallHelper *helper, AVCodecContext
 }
 
 AudioChannel::~AudioChannel() {
-
+    free(buffer);
+    buffer = 0;
 }
 
 
@@ -57,7 +63,17 @@ void AudioChannel::play() {
 }
 
 void AudioChannel::stop() {
+    isPlaying = 0;
+    helper = 0;
+    setEnable(0);
+    pthread_join(audioDecodeTask, 0);
+    pthread_join(audioPlayTask, 0);
 
+    _releaseOpenSL();
+    if (swrContext) {
+        swr_free(&swrContext);
+        swrContext = 0;
+    }
 }
 
 void AudioChannel::decode() {
@@ -85,6 +101,9 @@ void AudioChannel::decode() {
         } else if (ret < 0) {
             break;
         }
+        while (frame_queue.size() > 100 && isPlaying) {
+            av_usleep(10 * 1000);
+        }
         frame_queue.enQueue(frame);
     }
 
@@ -102,7 +121,6 @@ void AudioChannel::play_t() {
     /**
      * 1、 创建引擎
      */
-    SLObjectItf engineObject = NULL;
     SLresult result;
     result = slCreateEngine(&engineObject, 0, NULL, 0, NULL, NULL);
     if (result != SL_RESULT_SUCCESS) {
@@ -115,7 +133,6 @@ void AudioChannel::play_t() {
         return;
     }
 
-    SLEngineItf engineInterface = NULL;
     result = (*engineObject)->GetInterface(engineObject, SL_IID_ENGINE, &engineInterface);
     if (result != SL_RESULT_SUCCESS) {
         return;
@@ -125,7 +142,7 @@ void AudioChannel::play_t() {
     /**
      * 2、创建混音器
      */
-    SLObjectItf outputMixObject = NULL;
+
     result = (*engineInterface)->CreateOutputMix(engineInterface, &outputMixObject, 0, 0, 0);
     if (result != SL_RESULT_SUCCESS) {
         return;
@@ -161,19 +178,18 @@ void AudioChannel::play_t() {
 
     // 播放器相当于对混音器进行了一层包装， 提供了额外的如：开始，停止
     // 真正播放声音的是混音器
-    SLObjectItf bqPlayerObject = NULL;
+
     (*engineInterface)->CreateAudioPlayer(engineInterface, &bqPlayerObject, &slDataSource,
                                           &audioSnk, 1, ids, req);
     // 初始化播放器
     (*bqPlayerObject)->Realize(bqPlayerObject, SL_BOOLEAN_FALSE);
 
     // 获取播放器数据队列操作接口
-    SLAndroidSimpleBufferQueueItf bqPlayerBufferQueue = NULL;
     (*bqPlayerObject)->GetInterface(bqPlayerObject, SL_IID_BUFFERQUEUE, &bqPlayerBufferQueue);
     // 启动播放器后，执行回调来获取数据并播放
     (*bqPlayerBufferQueue)->RegisterCallback(bqPlayerBufferQueue, bqPlayerCallback, this);
 
-    SLPlayItf bqPlayerInterface = NULL;
+
     (*bqPlayerObject)->GetInterface(bqPlayerObject, SL_IID_PLAY, &bqPlayerInterface);
     (*bqPlayerInterface)->SetPlayState(bqPlayerInterface, SL_PLAYSTATE_PLAYING);
 
@@ -184,7 +200,7 @@ void AudioChannel::play_t() {
 }
 
 int AudioChannel::getData_t() {
-    int dataSize;
+    int dataSize = 0;
     AVFrame *frame = 0;
 
     while (isPlaying) {
@@ -199,8 +215,41 @@ int AudioChannel::getData_t() {
         int nb = swr_convert(swrContext, &buffer, bufferCount,
                              (const uint8_t **) frame->data, frame->nb_samples);
         dataSize = nb * out_channels * out_samplesSize;
+        // very important!!!!!!!!! 播放这一段声音的时刻
+        clock = frame->pts * av_q2d(time_base);
         break;
     }
 
     return dataSize;
 }
+
+void AudioChannel::_releaseOpenSL() {
+    LOGE("停止播放");
+
+    if (bqPlayerInterface) {
+        (*bqPlayerInterface)->SetPlayState(bqPlayerInterface, SL_PLAYSTATE_STOPPED);
+        bqPlayerInterface = 0;
+    }
+
+    // 销毁播放器
+    if (bqPlayerObject) {
+        (*bqPlayerObject)->Destroy(bqPlayerObject);
+        bqPlayerObject = 0;
+        bqPlayerBufferQueue = 0;
+    }
+    // 销毁混音器
+    if (outputMixObject) {
+        (*outputMixObject)->Destroy(outputMixObject);
+        outputMixObject = 0;
+    }
+    // 销毁引擎
+    if (engineObject) {
+        (*engineObject)->Destroy(engineObject);
+        engineObject = 0;
+        engineInterface = 0;
+    }
+
+
+}
+
+
